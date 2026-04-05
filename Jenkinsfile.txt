@@ -13,6 +13,7 @@ pipeline {
         JIRA_FEATURE_TEAM_FIELD = 'customfield_11101'
         JIRA_PAT                = credentials('jira-pat-fontus')
         JIRA_DB_PATH            = 'C:\\Jenkins\\fontus\\fontus_analysis.db'
+        PYTHONIOENCODING        = 'utf-8'
     }
 
     stages {
@@ -37,6 +38,7 @@ pipeline {
             steps {
                 bat '''
                     if not exist "C:\\Jenkins\\fontus" mkdir "C:\\Jenkins\\fontus"
+                    set PYTHONIOENCODING=utf-8
                     venv\\Scripts\\python jira_analysis.py
                 '''
             }
