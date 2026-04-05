@@ -1,0 +1,120 @@
+pipeline {
+    agent any
+
+    triggers {
+        // Jeden Montag um 06:00 Uhr – nach Bedarf anpassen
+        // Cron-Syntax: Minute Stunde Tag Monat Wochentag
+        // Beispiele:
+        //   '0 6 * * 1'      → Montags 06:00
+        //   '0 6 * * 1,4'    → Montags + Donnerstags 06:00
+        //   '0 22 * * 5'     → Freitags 22:00 (nach Geschäftsschluss)
+        cron('0 6 * * 1')
+    }
+
+    environment {
+        // ── Jira-Verbindung ───────────────────────────────────────────────
+        JIRA_BASE_URL           = 'https://jira.local.wmgruppe.de'
+        JIRA_PROJECT            = 'FONTUS'
+        JIRA_SSL_VERIFY         = 'false'
+        JIRA_FEATURE_TEAM_FIELD = 'customfield_11101'
+
+        // PAT aus Jenkins Credentials Store (niemals als Klartext hier!)
+        // Anlegen: Jenkins → Verwalten → Credentials → Global →
+        //          Add Credentials → Secret text → ID: jira-pat-fontus
+        JIRA_PAT = credentials('jira-pat-fontus')
+
+        // ── Datenbank ─────────────────────────────────────────────────────
+        // Fixer Pfad – DB wächst mit jedem Lauf (run_ts als Schlüssel)
+        // Für Server-Betrieb: absoluten Pfad auf persistentem Volume verwenden
+        JIRA_DB_PATH = '/var/jenkins_home/fontus/fontus_analysis.db'
+
+        // ── Benachrichtigung ──────────────────────────────────────────────
+        NOTIFY_EMAIL = 'm.richardon@extern.wmdaten.com'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                // Script aus SCM holen (Git, SVN, …)
+                // Falls das Script lokal liegt, diesen Stage weglassen
+                checkout scm
+            }
+        }
+
+        stage('Python-Umgebung') {
+            steps {
+                sh '''
+                    python3 -m venv venv
+                    venv/bin/pip install --upgrade pip --quiet
+                    venv/bin/pip install -r requirements.txt --quiet
+                '''
+            }
+        }
+
+        stage('Analyse') {
+            steps {
+                // DB-Verzeichnis anlegen falls nicht vorhanden
+                sh 'mkdir -p $(dirname $JIRA_DB_PATH)'
+
+                // Script ausführen
+                sh 'venv/bin/python jira_analysis.py'
+            }
+        }
+
+        stage('Archivieren') {
+            steps {
+                // Excel- und JSON-Dateien als Build-Artefakte speichern.
+                // Jeder Build-Run hat seine eigene Kopie (Timestamp im Dateinamen).
+                archiveArtifacts(
+                    artifacts: 'fontus_analysis_*.xlsx, fontus_transitions_*.json',
+                    fingerprint: true,
+                    allowEmptyArchive: false
+                )
+            }
+        }
+
+    }
+
+    post {
+        success {
+            echo "✓ Analyse erfolgreich abgeschlossen."
+            echo "  DB: ${JIRA_DB_PATH}"
+            echo "  Nächster Lauf: ${currentBuild.nextBuildLabel ?: 'siehe Cron-Trigger'}"
+        }
+
+        failure {
+            mail(
+                to:      "${NOTIFY_EMAIL}",
+                subject: "[FONTUS] Analyse fehlgeschlagen – Build #${BUILD_NUMBER}",
+                body:    """\
+Hallo,
+
+der automatisierte Fontus-Analyselauf ist fehlgeschlagen.
+
+Build:    #${BUILD_NUMBER}
+Zeitpunkt: ${new Date()}
+Details:  ${BUILD_URL}console
+
+Bitte Log prüfen und ggf. Jira-Verbindung oder PAT verifizieren.
+
+Viele Grüße
+Jenkins
+""".stripIndent()
+            )
+        }
+
+        unstable {
+            mail(
+                to:      "${NOTIFY_EMAIL}",
+                subject: "[FONTUS] Analyse instabil – Build #${BUILD_NUMBER}",
+                body:    "Build war instabil. Details: ${BUILD_URL}"
+            )
+        }
+
+        always {
+            // Virtuelle Umgebung aufräumen (spart Speicher auf dem Agent)
+            sh 'rm -rf venv'
+        }
+    }
+}

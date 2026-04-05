@@ -1,0 +1,12 @@
+# Jira API
+requests>=2.31.0
+
+# Konfiguration via .env
+python-dotenv>=1.0.0
+
+# Excel-Export (export_excel)
+openpyxl>=3.1.0
+
+# SQLite ist in Python stdlib enthalten – kein separates Paket nötig
+# sqlite3 (stdlib)
+
